@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Lab Tube Scanner - Phone Companion</title>
+  <!-- PeerJS and ZXing for Mobile -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #090e1a;
+      color: #f8fafc;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* Mobile Header */
+    .mobile-header {
+      background: #0f172a;
+      border-bottom: 1px solid #1e293b;
+      padding: 10px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+    }
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .header-icon {
+      width: 28px;
+      height: 28px;
+      background: #0284c7;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 14px;
+    }
+    .header-title h1 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .header-title p {
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    /* Status Pill */
+    .connection-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      background: #1e293b;
+      border: 1px solid #334155;
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+    }
+    .dot-connected { background: #10b981; box-shadow: 0 0 8px #10b981; }
+    .dot-connecting { background: #f59e0b; animation: pulse 1s infinite alternate; }
+    .dot-disconnected { background: #ef4444; }
+
+    @keyframes pulse { from { opacity: 0.4; } to { opacity: 1; } }
+
+    /* Camera Viewfinder */
+    .viewfinder-wrapper {
+      position: relative;
+      flex: 1;
+      background: #000000;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #camera-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.2s ease-out;
+    }
+
+    /* Targeting Reticle & Laser */
+    .scan-reticle {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      background: rgba(0, 0, 0, 0.22);
+    }
+    .reticle-box {
+      position: relative;
+      width: 82%;
+      height: 48%;
+      border: 1px dashed rgba(56, 189, 248, 0.45);
+      border-radius: 10px;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.28);
+      transition: all 0.18s ease;
+    }
+    .reticle-box.barcode-found {
+      border-color: #10b981 !important;
+      box-shadow: 0 0 35px rgba(16, 185, 129, 0.9), 0 0 0 9999px rgba(0, 0, 0, 0.28) !important;
+    }
+
+    .reticle-corner {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-color: #38bdf8;
+      border-style: solid;
+      transition: border-color 0.2s;
+    }
+    .barcode-found .reticle-corner { border-color: #10b981 !important; }
+    .tl { top: -2px; left: -2px; border-width: 3px 0 0 3px; border-top-left-radius: 8px; }
+    .tr { top: -2px; right: -2px; border-width: 3px 3px 0 0; border-top-right-radius: 8px; }
+    .bl { bottom: -2px; left: -2px; border-width: 0 0 3px 3px; border-bottom-left-radius: 8px; }
+    .br { bottom: -2px; right: -2px; border-width: 0 3px 3px 0; border-bottom-right-radius: 8px; }
+
+    .laser-beam {
+      position: absolute;
+      left: 6px;
+      right: 6px;
+      height: 3px;
+      background: #ef4444;
+      box-shadow: 0 0 10px #ef4444, 0 0 18px #ef4444;
+      border-radius: 2px;
+      animation: laserSweep 1.5s ease-in-out infinite alternate;
+    }
+    .barcode-found .laser-beam {
+      background: #10b981 !important;
+      box-shadow: 0 0 14px #10b981 !important;
+      animation-play-state: paused;
+    }
+    @keyframes laserSweep {
+      0% { top: 8px; }
+      100% { top: calc(100% - 10px); }
+    }
+
+    .reticle-hint {
+      margin-top: 12px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #f1f5f9;
+      text-shadow: 0 1px 4px #000;
+    }
+
+    /* Floating Camera Controls */
+    .cam-floating-controls {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 10;
+    }
+    .icon-circle-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(8px);
+      cursor: pointer;
+    }
+    .icon-circle-btn:active { background: #0284c7; }
+    .icon-circle-btn.torch-active { background: #eab308; color: #000; border-color: #fef08a; }
+
+    /* Zoom Bar */
+    .floating-zoom-bar {
+      position: absolute;
+      bottom: 14px;
+      display: flex;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.75);
+      padding: 4px 8px;
+      border-radius: 20px;
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      z-index: 10;
+    }
+    .zoom-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+    .zoom-btn.active {
+      background: #0284c7;
+      color: #ffffff;
+    }
+
+    /* Bottom Results Drawer */
+    .bottom-drawer {
+      background: #0f172a;
+      border-top: 1px solid #1e293b;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .result-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #1e293b;
+      border: 1px solid #334155;
+      padding: 10px 14px;
+      border-radius: 8px;
+    }
+    .result-label {
+      font-size: 11px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .result-code {
+      font-family: ui-monospace, monospace;
+      font-size: 20px;
+      font-weight: 800;
+      color: #38bdf8;
+      letter-spacing: 1px;
+    }
+    .sent-badge {
+      font-size: 11px;
+      background: #059669;
+      color: #ffffff;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+      display: none;
+    }
+
+    /* Pair Code Input Modal if not connected */
+    .pair-modal-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(10, 15, 29, 0.94);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+    .pair-card {
+      background: #0f172a;
+      border: 1px solid #334155;
+      padding: 24px 20px;
+      border-radius: 14px;
+      max-width: 320px;
+      width: 100%;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+    .pair-card h2 {
+      font-size: 17px;
+      color: #38bdf8;
+      margin-bottom: 6px;
+    }
+    .pair-card p {
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 16px;
+      line-height: 1.4;
+    }
+    .pair-input {
+      width: 100%;
+      background: #1e293b;
+      border: 1.5px solid #0284c7;
+      color: #f8fafc;
+      font-size: 22px;
+      font-family: ui-monospace, monospace;
+      font-weight: 700;
+      text-align: center;
+      padding: 10px;
+      border-radius: 8px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      outline: none;
+      margin-bottom: 14px;
+    }
+    .btn-connect {
+      width: 100%;
+      background: #0284c7;
+      color: #ffffff;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-connect:active { background: #0369a1; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="mobile-header">
+    <div class="header-brand">
+      <div class="header-icon">🔬</div>
+      <div class="header-title">
+        <h1>Lab Tube Scanner</h1>
+        <p>Wireless Handheld Gun for PC</p>
+      </div>
+    </div>
+    <div class="connection-pill" id="conn-pill">
+      <span class="status-dot dot-disconnected" id="conn-dot"></span>
+      <span id="conn-text">Disconnected</span>
+    </div>
+  </header>
+
+  <!-- Viewfinder -->
+  <main class="viewfinder-wrapper">
+    <video id="camera-video" playsinline muted autoplay></video>
+
+    <!-- Scanner Reticle -->
+    <div class="scan-reticle">
+      <div class="reticle-box" id="reticle-box">
+        <div class="reticle-corner tl"></div>
+        <div class="reticle-corner tr"></div>
+        <div class="reticle-corner bl"></div>
+        <div class="reticle-corner br"></div>
+        <div class="laser-beam" id="laser-beam"></div>
+      </div>
+      <p class="reticle-hint" id="reticle-hint">Aim at tube barcode (e.g. jk3793782)</p>
+    </div>
+
+    <!-- Floating Top-Right Buttons -->
+    <div class="cam-floating-controls">
+      <button class="icon-circle-btn" id="btn-torch" title="Flashlight">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+        </svg>
+      </button>
+      <button class="icon-circle-btn" id="btn-reconnect" title="Connection Settings">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Floating Zoom Buttons -->
+    <div class="floating-zoom-bar">
+      <button class="zoom-btn" data-zoom="1.0">1x</button>
+      <button class="zoom-btn active" data-zoom="1.5">1.5x</button>
+      <button class="zoom-btn" data-zoom="2.0">2x</button>
+    </div>
+  </main>
+
+  <!-- Bottom Drawer -->
+  <footer class="bottom-drawer">
+    <div class="result-row">
+      <div>
+        <div class="result-label">Last Scanned Tube:</div>
+        <div class="result-code" id="result-code">&mdash; &mdash; &mdash;</div>
+      </div>
+      <div class="sent-badge" id="sent-badge">&check; Filled on PC</div>
+    </div>
+  </footer>
+
+  <!-- Connect to PC Modal (Shown if pair code missing) -->
+  <div class="pair-modal-overlay" id="pair-modal">
+    <div class="pair-card">
+      <h2>Link with PC</h2>
+      <p>Look at your PC Chrome extension screen and enter the 6-character Pair Code:</p>
+      <input type="text" id="pair-code-input" class="pair-input" placeholder="LAB-8392" maxlength="8" spellcheck="false" autocomplete="off">
+      <button class="btn-connect" id="btn-submit-pair">Connect to PC</button>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let peer = null;
+    let conn = null;
+    let pairCode = null;
+    let mediaStream = null;
+    let videoTrack = null;
+    let isTorchOn = false;
+    let zoomLevel = 1.5;
+    let nativeDetector = null;
+    let zxingReader = null;
+    let lastScanTime = 0;
+    let lastScannedCode = null;
+    let consensusCode = null;
+    let consensusCount = 0;
+
+    const videoEl = document.getElementById('camera-video');
+    const reticleBox = document.getElementById('reticle-box');
+    const reticleHint = document.getElementById('reticle-hint');
+    const resultCodeEl = document.getElementById('result-code');
+    const sentBadge = document.getElementById('sent-badge');
+    const connPill = document.getElementById('conn-pill');
+    const connDot = document.getElementById('conn-dot');
+    const connText = document.getElementById('conn-text');
+    const pairModal = document.getElementById('pair-modal');
+    const pairInput = document.getElementById('pair-code-input');
+    const btnSubmitPair = document.getElementById('btn-submit-pair');
+    const btnTorch = document.getElementById('btn-torch');
+    const btnReconnect = document.getElementById('btn-reconnect');
+    const zoomBtns = document.querySelectorAll('.zoom-btn');
+
+    // Offscreen Canvas
+    const scanCanvas = document.createElement('canvas');
+    const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+    const rotCanvas = document.createElement('canvas');
+    const rotCtx = rotCanvas.getContext('2d', { willReadFrequently: true });
+
+    // 1. Audio Beep & Haptic Vibration
+    function playBeepAndHaptic() {
+      if (navigator.vibrate) {
+        navigator.vibrate([60, 40, 60]); // Double haptic pulse
+      }
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1860, ctx.currentTime);
+        gain.gain.setValueAtTime(0.2, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.10);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.10);
+      } catch (e) {}
+    }
+
+    // 2. Camera Setup (Back Camera with Continuous Autofocus)
+    async function startCamera() {
+      try {
+        const constraints = {
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920, min: 1280 },
+            height: { ideal: 1080, min: 720 }
+          }
+        };
+
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        videoEl.srcObject = mediaStream;
+
+        videoTrack = mediaStream.getVideoTracks()[0];
+        if (videoTrack && videoTrack.getCapabilities) {
+          const caps = videoTrack.getCapabilities();
+          const adv = [];
+          if (caps.focusMode && caps.focusMode.includes('continuous')) adv.push({ focusMode: 'continuous' });
+          if (caps.exposureMode && caps.exposureMode.includes('continuous')) adv.push({ exposureMode: 'continuous' });
+          if (adv.length > 0) {
+            try { await videoTrack.applyConstraints({ advanced: adv }); } catch (e) {}
+          }
+          if (caps.torch) {
+            btnTorch.classList.remove('hidden');
+          }
+        }
+
+        await videoEl.play();
+        applyZoom(zoomLevel);
+        startScanLoop();
+
+      } catch (err) {
+        alert('Camera access needed to scan tube barcodes: ' + err.message);
+      }
+    }
+
+    function applyZoom(z) {
+      zoomLevel = z;
+      zoomBtns.forEach(btn => {
+        if (parseFloat(btn.getAttribute('data-zoom')) === z) btn.classList.add('active');
+        else btn.classList.remove('active');
+      });
+      videoEl.style.transform = `scale(${zoomLevel})`;
+
+      if (videoTrack && videoTrack.getCapabilities) {
+        const caps = videoTrack.getCapabilities();
+        if (caps.zoom) {
+          try {
+            const hwZoom = Math.min(caps.zoom.max, Math.max(caps.zoom.min, zoomLevel));
+            videoTrack.applyConstraints({ advanced: [{ zoom: hwZoom }] });
+          } catch (e) {}
+        }
+      }
+    }
+
+    // 3. WebRTC PeerJS Connection to PC
+    function connectToPc(code) {
+      if (!code) return;
+      pairCode = code.toUpperCase().trim();
+      localStorage.setItem('lab_pair_code', pairCode);
+
+      connDot.className = 'status-dot dot-connecting';
+      connText.textContent = `Connecting to ${pairCode}...`;
+
+      if (peer) {
+        try { peer.destroy(); } catch (e) {}
+      }
+
+      peer = new Peer();
+
+      peer.on('open', (id) => {
+        const pcTargetId = 'lab-pc-' + pairCode;
+        conn = peer.connect(pcTargetId, { reliable: true });
+
+        conn.on('open', () => {
+          connDot.className = 'status-dot dot-connected';
+          connText.textContent = `Linked to PC (${pairCode})`;
+          pairModal.classList.add('hidden');
+        });
+
+        conn.on('data', (data) => {
+          if (data.type === 'ack') {
+            sentBadge.style.display = 'inline-block';
+            setTimeout(() => { sentBadge.style.display = 'none'; }, 2000);
+          } else if (data.type === 'ping') {
+            playBeepAndHaptic();
+          }
+        });
+
+        conn.on('close', () => {
+          connDot.className = 'status-dot dot-disconnected';
+          connText.textContent = 'Disconnected';
+        });
+
+        conn.on('error', () => {
+          connDot.className = 'status-dot dot-disconnected';
+          connText.textContent = 'Connection Error';
+        });
+      });
+
+      peer.on('error', (err) => {
+        connDot.className = 'status-dot dot-disconnected';
+        connText.textContent = 'Pair Failed';
+      });
+    }
+
+    // 4. Scanning Engines
+    async function initEngines() {
+      if ('BarcodeDetector' in window) {
+        try {
+          const supported = await window.BarcodeDetector.getSupportedFormats();
+          const desired = ['code_128', 'code_39', 'code_93', 'codabar', 'ean_13', 'ean_8', 'itf', 'upc_a', 'upc_e', 'qr_code'];
+          const formats = desired.filter(f => supported.includes(f));
+          if (formats.length > 0) nativeDetector = new window.BarcodeDetector({ formats });
+        } catch (e) {}
+      }
+
+      if (window.ZXingBrowser) {
+        try {
+          const hints = new Map();
+          const f = window.ZXingBrowser.BarcodeFormat;
+          hints.set(2, [f.CODE_128, f.CODE_39, f.EAN_13, f.EAN_8, f.CODABAR, f.ITF, f.UPC_A, f.UPC_E, f.QR_CODE]);
+          hints.set(3, true);
+          zxingReader = new window.ZXingBrowser.BrowserMultiFormatReader(hints);
+        } catch (e) {}
+      }
+    }
+
+    let lastTick = 0;
+    function startScanLoop() {
+      async function tick(ts) {
+        if (ts - lastTick >= 35) {
+          lastTick = ts;
+          if (videoEl.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            const match = await decodeFrame();
+            if (match && match.text) {
+              // 2-Frame Consensus Verification
+              if (match.text === consensusCode) {
+                consensusCount++;
+                if (consensusCount >= 2) {
+                  onBarcodeConfirmed(match.text);
+                }
+              } else {
+                consensusCode = match.text;
+                consensusCount = 1;
+              }
+            }
+          }
+        }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }
+
+    async function decodeFrame() {
+      const vW = videoEl.videoWidth;
+      const vH = videoEl.videoHeight;
+      if (!vW || !vH) return null;
+
+      // 1. Native detector
+      if (nativeDetector) {
+        try {
+          const res = await nativeDetector.detect(videoEl);
+          if (res && res.length > 0) return { text: String(res[0].rawValue) };
+        } catch (e) {}
+      }
+
+      // 2. Zoomed ROI
+      const cropW = Math.round(vW / zoomLevel);
+      const cropH = Math.round(vH / zoomLevel);
+      const startX = Math.round((vW - cropW) / 2);
+      const startY = Math.round((vH - cropH) / 2);
+
+      scanCanvas.width = 640;
+      scanCanvas.height = 360;
+      scanCtx.drawImage(videoEl, startX, startY, cropW, cropH, 0, 0, scanCanvas.width, scanCanvas.height);
+
+      if (nativeDetector) {
+        try {
+          const res = await nativeDetector.detect(scanCanvas);
+          if (res && res.length > 0) return { text: String(res[0].rawValue) };
+        } catch (e) {}
+      }
+
+      if (zxingReader) {
+        try {
+          const res = zxingReader.decodeFromCanvas(scanCanvas);
+          if (res) return { text: String(res.getText()) };
+        } catch (e) {}
+      }
+
+      // 3. Rotated 90° for vertical blood tubes
+      rotCanvas.width = scanCanvas.height;
+      rotCanvas.height = scanCanvas.width;
+      rotCtx.save();
+      rotCtx.translate(rotCanvas.width / 2, rotCanvas.height / 2);
+      rotCtx.rotate(Math.PI / 2);
+      rotCtx.drawImage(scanCanvas, -scanCanvas.width / 2, -scanCanvas.height / 2);
+      rotCtx.restore();
+
+      if (nativeDetector) {
+        try {
+          const res = await nativeDetector.detect(rotCanvas);
+          if (res && res.length > 0) return { text: String(res[0].rawValue) };
+        } catch (e) {}
+      }
+
+      if (zxingReader) {
+        try {
+          const res = zxingReader.decodeFromCanvas(rotCanvas);
+          if (res) return { text: String(res.getText()) };
+        } catch (e) {}
+      }
+
+      return null;
+    }
+
+    function onBarcodeConfirmed(rawCode) {
+      const code = String(rawCode);
+      const now = Date.now();
+      if (code === lastScannedCode && (now - lastScanTime) < 1800) return;
+
+      lastScannedCode = code;
+      lastScanTime = now;
+
+      // Lock feedback
+      reticleBox.classList.add('barcode-found');
+      reticleHint.textContent = `✓ Decoded: ${code}`;
+      resultCodeEl.textContent = code;
+
+      playBeepAndHaptic();
+
+      // Send to PC over WebRTC DataChannel!
+      if (conn && conn.open) {
+        conn.send({ type: 'scan', barcode: code });
+        sentBadge.style.display = 'inline-block';
+      } else {
+        alert(`Scanned: ${code}\n(PC not connected. Enter pair code to auto-type into PC).`);
+      }
+
+      setTimeout(() => {
+        reticleBox.classList.remove('barcode-found');
+        reticleHint.textContent = 'Aim at tube barcode (e.g. jk3793782)';
+        sentBadge.style.display = 'none';
+      }, 1000);
+    }
+
+    // 5. Event Listeners
+    btnSubmitPair.addEventListener('click', () => {
+      const val = pairInput.value.trim();
+      if (val) connectToPc(val);
+    });
+
+    pairInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') btnSubmitPair.click();
+    });
+
+    btnReconnect.addEventListener('click', () => {
+      pairModal.classList.remove('hidden');
+    });
+
+    btnTorch.addEventListener('click', async () => {
+      if (!videoTrack) return;
+      try {
+        isTorchOn = !isTorchOn;
+        await videoTrack.applyConstraints({ advanced: [{ torch: isTorchOn }] });
+        btnTorch.classList.toggle('torch-active', isTorchOn);
+      } catch (e) {}
+    });
+
+    zoomBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        applyZoom(parseFloat(btn.getAttribute('data-zoom')));
+      });
+    });
+
+    // 6. Initialization
+    document.addEventListener('DOMContentLoaded', async () => {
+      await initEngines();
+      await startCamera();
+
+      // Check URL query param ?pair=XXXX
+      const urlParams = new URLSearchParams(window.location.search);
+      const pairParam = urlParams.get('pair') || localStorage.getItem('lab_pair_code');
+
+      if (pairParam) {
+        pairInput.value = pairParam;
+        connectToPc(pairParam);
+      } else {
+        pairModal.classList.remove('hidden');
+      }
+    });
+  </script>
+</body>
+</html>
+
