@@ -340,8 +340,54 @@
       color: #ffffff;
       padding: 3px 8px;
       border-radius: 4px;
+      padding: 4px 10px;
+      border-radius: 6px;
       font-weight: 700;
       display: none;
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+    }
+
+    /* Prominent Live Connection Banner */
+    .live-connection-banner {
+      background: #064e3b;
+      border-bottom: 1.5px solid #10b981;
+      color: #6ee7b7;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 9px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-align: center;
+      transition: background 0.3s, color 0.3s;
+      z-index: 20;
+    }
+    .live-connection-banner.banner-disconnected {
+      background: #450a0a;
+      border-bottom: 1.5px solid #ef4444;
+      color: #fca5a5;
+    }
+    .live-connection-banner.banner-connecting {
+      background: #451a03;
+      border-bottom: 1.5px solid #f59e0b;
+      color: #fde68a;
+    }
+    .live-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #10b981;
+      display: inline-block;
+      box-shadow: 0 0 8px #10b981;
+    }
+    .banner-disconnected .live-dot {
+      background: #ef4444;
+      box-shadow: 0 0 8px #ef4444;
+    }
+    .banner-connecting .live-dot {
+      background: #f59e0b;
+      box-shadow: 0 0 8px #f59e0b;
     }
 
     /* Pair Code Input Modal if not connected */
@@ -465,6 +511,12 @@
     </div>
   </header>
 
+  <!-- Live Status Bar Visible At All Times -->
+  <div class="live-connection-banner banner-disconnected" id="live-connection-banner">
+    <span class="live-dot" id="live-dot"></span>
+    <span id="live-status-text">Disconnected from PC</span>
+  </div>
+
   <!-- Viewfinder -->
   <main class="viewfinder-wrapper">
     <video id="camera-video" playsinline muted autoplay></video>
@@ -554,6 +606,9 @@
     const connPill = document.getElementById('conn-pill');
     const connDot = document.getElementById('conn-dot');
     const connText = document.getElementById('conn-text');
+    const liveBanner = document.getElementById('live-connection-banner');
+    const liveDot = document.getElementById('live-dot');
+    const liveStatusText = document.getElementById('live-status-text');
     const pairModal = document.getElementById('pair-modal');
     const pairInput = document.getElementById('pair-code-input');
     const pairError = document.getElementById('pair-error');
@@ -684,11 +739,39 @@
       if (pairError) pairError.classList.add('hidden');
     }
 
+    function updateConnectionUi(status) {
+      if (status === 'connected') {
+        connDot.className = 'status-dot dot-connected';
+        connText.textContent = `Linked (${pairCode})`;
+        if (liveBanner) {
+          liveBanner.className = 'live-connection-banner banner-connected';
+          liveStatusText.textContent = `🟢 Linked to PC (${pairCode}) — Ready to Scan Tubes`;
+        }
+        pairModal.classList.add('hidden');
+        if (navigator.vibrate) navigator.vibrate(120);
+      } else if (status === 'connecting') {
+        connDot.className = 'status-dot dot-connecting';
+        connText.textContent = `Connecting...`;
+        if (liveBanner) {
+          liveBanner.className = 'live-connection-banner banner-connecting';
+          liveStatusText.textContent = `🟡 Connecting to PC (${pairCode || '...'})`;
+        }
+      } else {
+        connDot.className = 'status-dot dot-disconnected';
+        connText.textContent = 'Disconnected';
+        if (liveBanner) {
+          liveBanner.className = 'live-connection-banner banner-disconnected';
+          liveStatusText.textContent = '🔴 Disconnected from PC — Reconnecting...';
+        }
+      }
+    }
+
     function scheduleReconnect() {
       if (isReconnecting || !pairCode) return;
       isReconnecting = true;
       connDot.className = 'status-dot dot-connecting';
       connText.textContent = `Auto-reconnecting...`;
+      updateConnectionUi('connecting');
 
       clearTimeout(reconnectTimer);
       reconnectTimer = setTimeout(() => {
@@ -722,6 +805,7 @@
       btnSubmitPair.disabled = true;
       btnSubmitPair.textContent = `⏳ Connecting to ${pairCode}...`;
       showPairStatus(`Connecting to PC (${pairCode})...`);
+      updateConnectionUi('connecting');
 
       connDot.className = 'status-dot dot-connecting';
       connText.textContent = `Connecting to ${pairCode}...`;
@@ -753,6 +837,7 @@
             connDot.className = 'status-dot dot-connected';
             connText.textContent = `Linked to PC (${pairCode})`;
             pairModal.classList.add('hidden');
+            updateConnectionUi('connected');
             if (pairError) pairError.classList.add('hidden');
             if (pairStatusMsg) pairStatusMsg.classList.add('hidden');
             startHeartbeat();
@@ -768,10 +853,20 @@
           conn.on('data', (data) => {
             if (!data) return;
             if (data.type === 'ack') {
+              const targetName = data.fieldName || 'Active Box';
+              sentBadge.textContent = `✓ Auto-Filled in: ${targetName}`;
               sentBadge.style.display = 'inline-block';
               setTimeout(() => { sentBadge.style.display = 'none'; }, 2000);
+              reticleHint.innerHTML = `<span style="color:#10b981; font-weight:700;">✓ Typed into PC: ${data.barcode} (${targetName})</span>`;
+              if (navigator.vibrate) navigator.vibrate([60, 40, 80]);
+              setTimeout(() => {
+                sentBadge.style.display = 'none';
+                reticleHint.textContent = 'Aim at tube barcode (e.g. jk3793782)';
+              }, 2800);
             } else if (data.type === 'ping') {
               playBeepAndHaptic();
+            } else if (data.type === 'connected') {
+              updateConnectionUi('connected');
             }
           });
 
@@ -779,6 +874,7 @@
             clearInterval(heartbeatTimer);
             connDot.className = 'status-dot dot-disconnected';
             connText.textContent = 'PC Disconnected';
+            updateConnectionUi('disconnected');
             scheduleReconnect();
           });
 
@@ -936,7 +1032,9 @@
       if (conn && conn.open) {
         conn.send({ type: 'scan', barcode: code });
         sentBadge.textContent = '✓ Sent to PC';
+        sentBadge.textContent = '⏳ Auto-typing into PC...';
         sentBadge.style.display = 'inline-block';
+        reticleHint.textContent = `Scanned ${code} → Auto-typing into active box...`;
       } else {
         // Queue and show non-blocking feedback (no freezing alerts!)
         pendingBarcodeQueue.push(code);
