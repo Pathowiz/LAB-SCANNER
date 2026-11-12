@@ -338,8 +338,6 @@
       font-size: 11px;
       background: #059669;
       color: #ffffff;
-      padding: 3px 8px;
-      border-radius: 4px;
       padding: 4px 10px;
       border-radius: 6px;
       font-weight: 700;
@@ -769,8 +767,6 @@
     function scheduleReconnect() {
       if (isReconnecting || !pairCode) return;
       isReconnecting = true;
-      connDot.className = 'status-dot dot-connecting';
-      connText.textContent = `Auto-reconnecting...`;
       updateConnectionUi('connecting');
 
       clearTimeout(reconnectTimer);
@@ -807,9 +803,6 @@
       showPairStatus(`Connecting to PC (${pairCode})...`);
       updateConnectionUi('connecting');
 
-      connDot.className = 'status-dot dot-connecting';
-      connText.textContent = `Connecting to ${pairCode}...`;
-
       clearTimeout(connectTimeoutTimer);
       // 8-second timeout if PC is offline or unfindable
       connectTimeoutTimer = setTimeout(() => {
@@ -834,9 +827,6 @@
             clearTimeout(connectTimeoutTimer);
             btnSubmitPair.disabled = false;
             btnSubmitPair.textContent = 'Connect to PC';
-            connDot.className = 'status-dot dot-connected';
-            connText.textContent = `Linked to PC (${pairCode})`;
-            pairModal.classList.add('hidden');
             updateConnectionUi('connected');
             if (pairError) pairError.classList.add('hidden');
             if (pairStatusMsg) pairStatusMsg.classList.add('hidden');
@@ -856,7 +846,6 @@
               const targetName = data.fieldName || 'Active Box';
               sentBadge.textContent = `✓ Auto-Filled in: ${targetName}`;
               sentBadge.style.display = 'inline-block';
-              setTimeout(() => { sentBadge.style.display = 'none'; }, 2000);
               reticleHint.innerHTML = `<span style="color:#10b981; font-weight:700;">✓ Typed into PC: ${data.barcode} (${targetName})</span>`;
               if (navigator.vibrate) navigator.vibrate([60, 40, 80]);
               setTimeout(() => {
@@ -872,8 +861,6 @@
 
           conn.on('close', () => {
             clearInterval(heartbeatTimer);
-            connDot.className = 'status-dot dot-disconnected';
-            connText.textContent = 'PC Disconnected';
             updateConnectionUi('disconnected');
             scheduleReconnect();
           });
@@ -1031,7 +1018,6 @@
       // Send to PC over WebRTC DataChannel!
       if (conn && conn.open) {
         conn.send({ type: 'scan', barcode: code });
-        sentBadge.textContent = '✓ Sent to PC';
         sentBadge.textContent = '⏳ Auto-typing into PC...';
         sentBadge.style.display = 'inline-block';
         reticleHint.textContent = `Scanned ${code} → Auto-typing into active box...`;
