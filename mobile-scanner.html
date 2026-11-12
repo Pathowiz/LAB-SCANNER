@@ -513,7 +513,36 @@
       }
     }
 
-    // 3. WebRTC PeerJS Connection to PC
+    // 3. WebRTC PeerJS Connection to PC with Auto-Reconnect & Heartbeat
+    let isReconnecting = false;
+    let reconnectTimer = null;
+    let heartbeatTimer = null;
+    let pendingBarcodeQueue = [];
+
+    function scheduleReconnect() {
+      if (isReconnecting || !pairCode) return;
+      isReconnecting = true;
+      connDot.className = 'status-dot dot-connecting';
+      connText.textContent = `Auto-reconnecting...`;
+
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        isReconnecting = false;
+        if (!conn || !conn.open) {
+          connectToPc(pairCode);
+        }
+      }, 2000);
+    }
+
+    function startHeartbeat() {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = setInterval(() => {
+        if (conn && conn.open) {
+          try { conn.send({ type: 'heartbeat' }); } catch (e) {}
+        }
+      }, 5000);
+    }
+
     function connectToPc(code) {
       if (!code) return;
       pairCode = code.toUpperCase().trim();
@@ -536,9 +565,18 @@
           connDot.className = 'status-dot dot-connected';
           connText.textContent = `Linked to PC (${pairCode})`;
           pairModal.classList.add('hidden');
+          startHeartbeat();
+
+          // Flush any pending barcodes scanned while reconnecting
+          while (pendingBarcodeQueue.length > 0) {
+            const pending = pendingBarcodeQueue.shift();
+            conn.send({ type: 'scan', barcode: pending });
+            sentBadge.style.display = 'inline-block';
+          }
         });
 
         conn.on('data', (data) => {
+          if (!data) return;
           if (data.type === 'ack') {
             sentBadge.style.display = 'inline-block';
             setTimeout(() => { sentBadge.style.display = 'none'; }, 2000);
@@ -548,19 +586,19 @@
         });
 
         conn.on('close', () => {
-          connDot.className = 'status-dot dot-disconnected';
-          connText.textContent = 'Disconnected';
+          clearInterval(heartbeatTimer);
+          scheduleReconnect();
         });
 
         conn.on('error', () => {
-          connDot.className = 'status-dot dot-disconnected';
-          connText.textContent = 'Connection Error';
+          clearInterval(heartbeatTimer);
+          scheduleReconnect();
         });
       });
 
       peer.on('error', (err) => {
-        connDot.className = 'status-dot dot-disconnected';
-        connText.textContent = 'Pair Failed';
+        clearInterval(heartbeatTimer);
+        scheduleReconnect();
       });
     }
 
@@ -693,9 +731,15 @@
       // Send to PC over WebRTC DataChannel!
       if (conn && conn.open) {
         conn.send({ type: 'scan', barcode: code });
+        sentBadge.textContent = '✓ Sent to PC';
         sentBadge.style.display = 'inline-block';
       } else {
-        alert(`Scanned: ${code}\n(PC not connected. Enter pair code to auto-type into PC).`);
+        // Queue and show non-blocking feedback (no freezing alerts!)
+        pendingBarcodeQueue.push(code);
+        sentBadge.textContent = '⏳ Queued (Connecting...)';
+        sentBadge.style.display = 'inline-block';
+        reticleHint.textContent = `Scanned ${code} (Auto-sending when linked)`;
+        scheduleReconnect();
       }
 
       setTimeout(() => {
